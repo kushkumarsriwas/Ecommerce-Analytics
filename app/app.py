@@ -4,7 +4,9 @@ import plotly.express as px
 from pathlib import Path
 
 
-# ---------------- CONFIG ----------------
+# =========================================================
+# CONFIG
+# =========================================================
 
 BASE = Path(__file__).resolve().parent.parent
 DATA = BASE / "data" / "cleaned"
@@ -16,13 +18,14 @@ st.set_page_config(
 )
 
 
-# ---------------- LOAD DATA ----------------
+# =========================================================
+# DATA LOADERS
+# =========================================================
 
 @st.cache_data
-def load_data():
+def load_orders():
 
-    # Orders
-    orders = pd.read_csv(
+    return pd.read_csv(
         DATA / "olist_orders_dataset.csv",
         usecols=[
             "order_id",
@@ -39,8 +42,11 @@ def load_data():
         ]
     )
 
-    # Order Items
-    items = pd.read_csv(
+
+@st.cache_data
+def load_items():
+
+    return pd.read_csv(
         DATA / "olist_order_items_dataset.csv",
         usecols=[
             "order_id",
@@ -49,7 +55,10 @@ def load_data():
         ]
     )
 
-    # Customers
+
+@st.cache_data
+def load_customers():
+
     customers = pd.read_csv(
         DATA / "olist_customers_dataset.csv",
         usecols=[
@@ -59,7 +68,16 @@ def load_data():
         ]
     )
 
-    # Products
+    customers["customer_state"] = (
+        customers["customer_state"].astype("category")
+    )
+
+    return customers
+
+
+@st.cache_data
+def load_products():
+
     products = pd.read_csv(
         DATA / "olist_products_dataset.csv",
         usecols=[
@@ -68,8 +86,39 @@ def load_data():
         ]
     )
 
-    # Payments
-    payments = pd.read_csv(
+    translation = pd.read_csv(
+        DATA / "product_category_name_translation.csv",
+        usecols=[
+            "product_category_name",
+            "product_category_name_english"
+        ]
+    )
+
+    products = products.merge(
+        translation,
+        on="product_category_name",
+        how="left"
+    )
+
+    products["category"] = (
+        products["product_category_name_english"]
+        .fillna(products["product_category_name"])
+        .fillna("Unknown")
+    )
+
+    products["category"] = (
+        products["category"].astype("category")
+    )
+
+    return products[
+        ["product_id", "category"]
+    ]
+
+
+@st.cache_data
+def load_payments():
+
+    return pd.read_csv(
         DATA / "olist_order_payments_dataset.csv",
         usecols=[
             "order_id",
@@ -78,8 +127,11 @@ def load_data():
         ]
     )
 
-    # Reviews
-    reviews = pd.read_csv(
+
+@st.cache_data
+def load_reviews():
+
+    return pd.read_csv(
         DATA / "olist_order_reviews_dataset.csv",
         usecols=[
             "order_id",
@@ -87,65 +139,10 @@ def load_data():
         ]
     )
 
-    # Sellers
-    sellers = pd.read_csv(
-        DATA / "olist_sellers_dataset.csv"
-    )
 
-    # Category Translation
-    translation = pd.read_csv(
-        DATA / "product_category_name_translation.csv"
-    )
-
-    # Translate product categories
-    products = products.merge(
-        translation,
-        on="product_category_name",
-        how="left"
-    )
-
-    products["category"] = products[
-        "product_category_name_english"
-    ].fillna(
-        products["product_category_name"]
-    ).fillna("Unknown")
-
-    # Create sales dataframe
-    sales = (
-        orders
-        .merge(
-            customers,
-            on="customer_id",
-            how="left"
-        )
-        .merge(
-            items,
-            on="order_id",
-            how="inner"
-        )
-        .merge(
-            products[["product_id", "category"]],
-            on="product_id",
-            how="left"
-        )
-    )
-
-    return (
-        orders,
-        items,
-        customers,
-        products,
-        payments,
-        reviews,
-        sellers,
-        sales
-    )
-
-
-orders, items, customers, products, payments, reviews, sellers, sales = load_data()
-
-
-# ---------------- SIDEBAR ----------------
+# =========================================================
+# SIDEBAR
+# =========================================================
 
 st.sidebar.title("Dashboard Navigation")
 
@@ -163,9 +160,15 @@ page = st.sidebar.radio(
 )
 
 
-# ---------------- EXECUTIVE DASHBOARD ----------------
+# =========================================================
+# EXECUTIVE DASHBOARD
+# =========================================================
 
 if page == "Executive Dashboard":
+
+    orders = load_orders()
+    items = load_items()
+    customers = load_customers()
 
     st.title("E-Commerce Business Intelligence")
 
@@ -175,7 +178,7 @@ if page == "Executive Dashboard":
 
     total_orders = orders["order_id"].nunique()
 
-    total_customers = sales["customer_unique_id"].nunique()
+    total_customers = customers["customer_unique_id"].nunique()
 
     revenue = items["price"].sum()
 
@@ -205,12 +208,36 @@ if page == "Executive Dashboard":
 
     st.divider()
 
+    # Monthly revenue
     monthly = (
-        sales.assign(
-            month=sales[
+        orders[
+            [
+                "order_id",
                 "order_purchase_timestamp"
-            ].dt.to_period("M").astype(str)
+            ]
+        ]
+        .merge(
+            items[
+                [
+                    "order_id",
+                    "price"
+                ]
+            ],
+            on="order_id",
+            how="inner"
         )
+    )
+
+    monthly["month"] = (
+        monthly[
+            "order_purchase_timestamp"
+        ]
+        .dt.to_period("M")
+        .astype(str)
+    )
+
+    monthly = (
+        monthly
         .groupby("month")
         .agg(
             Revenue=("price", "sum"),
@@ -260,6 +287,9 @@ if page == "Executive Dashboard":
             use_container_width=True
         )
 
+    del monthly
+
+    # Delivery
     delivered = orders.dropna(
         subset=[
             "order_delivered_customer_date"
@@ -279,11 +309,23 @@ if page == "Executive Dashboard":
         * 100
     )
 
-    repeat = (
-        orders
+    # Repeat customers
+    customer_order_count = (
+        orders[
+            [
+                "customer_id",
+                "order_id"
+            ]
+        ]
         .merge(
-            customers,
-            on="customer_id"
+            customers[
+                [
+                    "customer_id",
+                    "customer_unique_id"
+                ]
+            ],
+            on="customer_id",
+            how="left"
         )
         .groupby(
             "customer_unique_id"
@@ -292,7 +334,8 @@ if page == "Executive Dashboard":
     )
 
     repeat_rate = (
-        repeat.gt(1).mean() * 100
+        customer_order_count.gt(1).mean()
+        * 100
     )
 
     c1, c2, c3 = st.columns(3)
@@ -313,18 +356,43 @@ if page == "Executive Dashboard":
     )
 
 
-# ---------------- SALES ANALYTICS ----------------
+# =========================================================
+# SALES ANALYTICS
+# =========================================================
 
 elif page == "Sales Analytics":
 
+    orders = load_orders()
+    items = load_items()
+    products = load_products()
+
     st.title("Sales Analytics")
 
-    monthly = (
-        sales.assign(
-            month=sales[
+    # Create only the required sales dataframe
+    sales = (
+        orders[
+            [
+                "order_id",
                 "order_purchase_timestamp"
-            ].dt.to_period("M").astype(str)
+            ]
+        ]
+        .merge(
+            items,
+            on="order_id",
+            how="inner"
         )
+    )
+
+    sales["month"] = (
+        sales[
+            "order_purchase_timestamp"
+        ]
+        .dt.to_period("M")
+        .astype(str)
+    )
+
+    monthly = (
+        sales
         .groupby("month")
         .agg(
             Revenue=("price", "sum"),
@@ -385,9 +453,24 @@ elif page == "Sales Analytics":
 
     st.subheader("Top Product Categories")
 
+    category_sales = (
+        items[
+            [
+                "order_id",
+                "product_id",
+                "price"
+            ]
+        ]
+        .merge(
+            products,
+            on="product_id",
+            how="left"
+        )
+    )
+
     category = (
-        sales
-        .groupby("category")
+        category_sales
+        .groupby("category", observed=True)
         .agg(
             Revenue=("price", "sum"),
             Orders=("order_id", "nunique"),
@@ -414,17 +497,33 @@ elif page == "Sales Analytics":
     )
 
 
-# ---------------- CUSTOMER ANALYTICS ----------------
+# =========================================================
+# CUSTOMER ANALYTICS
+# =========================================================
 
 elif page == "Customer Analytics":
+
+    orders = load_orders()
+    customers = load_customers()
 
     st.title("Customer Analytics")
 
     customer_orders = (
-        orders
+        orders[
+            [
+                "order_id",
+                "customer_id"
+            ]
+        ]
         .merge(
-            customers,
-            on="customer_id"
+            customers[
+                [
+                    "customer_id",
+                    "customer_unique_id"
+                ]
+            ],
+            on="customer_id",
+            how="inner"
         )
         .groupby(
             "customer_unique_id"
@@ -447,11 +546,6 @@ elif page == "Customer Analytics":
     repeat_count = (
         customer_orders["customer_type"]
         == "Repeat"
-    ).sum()
-
-    one_time_count = (
-        customer_orders["customer_type"]
-        == "One-time"
     ).sum()
 
     c1, c2, c3 = st.columns(3)
@@ -523,15 +617,29 @@ elif page == "Customer Analytics":
     )
 
 
-# ---------------- PRODUCT ANALYTICS ----------------
+# =========================================================
+# PRODUCT ANALYTICS
+# =========================================================
 
 elif page == "Product Analytics":
 
+    items = load_items()
+    products = load_products()
+
     st.title("Product Analytics")
 
+    category_data = (
+        items
+        .merge(
+            products,
+            on="product_id",
+            how="left"
+        )
+    )
+
     category = (
-        sales
-        .groupby("category")
+        category_data
+        .groupby("category", observed=True)
         .agg(
             Revenue=("price", "sum"),
             Units=("product_id", "count"),
@@ -573,9 +681,13 @@ elif page == "Product Analytics":
     st.subheader("Top Products by Revenue")
 
     top_products = (
-        sales
+        category_data
         .groupby(
-            ["product_id", "category"]
+            [
+                "product_id",
+                "category"
+            ],
+            observed=True
         )
         .agg(
             Revenue=("price", "sum"),
@@ -600,15 +712,51 @@ elif page == "Product Analytics":
     )
 
 
-# ---------------- GEOGRAPHIC ANALYTICS ----------------
+# =========================================================
+# GEOGRAPHIC ANALYTICS
+# =========================================================
 
 elif page == "Geographic Analytics":
 
+    orders = load_orders()
+    items = load_items()
+    customers = load_customers()
+
     st.title("Geographic Analytics")
+
+    sales = (
+        orders[
+            [
+                "order_id",
+                "customer_id"
+            ]
+        ]
+        .merge(
+            customers[
+                [
+                    "customer_id",
+                    "customer_unique_id",
+                    "customer_state"
+                ]
+            ],
+            on="customer_id",
+            how="left"
+        )
+        .merge(
+            items[
+                [
+                    "order_id",
+                    "price"
+                ]
+            ],
+            on="order_id",
+            how="inner"
+        )
+    )
 
     state = (
         sales
-        .groupby("customer_state")
+        .groupby("customer_state", observed=True)
         .agg(
             Revenue=("price", "sum"),
             Orders=("order_id", "nunique"),
@@ -650,9 +798,14 @@ elif page == "Geographic Analytics":
     )
 
 
-# ---------------- OPERATIONS ANALYTICS ----------------
+# =========================================================
+# OPERATIONS ANALYTICS
+# =========================================================
 
 elif page == "Operations Analytics":
+
+    orders = load_orders()
+    customers = load_customers()
 
     st.title("Operations & Delivery Analytics")
 
@@ -708,13 +861,25 @@ elif page == "Operations Analytics":
     )
 
     delivery_state = (
-        delivered
+        delivered[
+            [
+                "customer_id",
+                "delivery_days"
+            ]
+        ]
         .merge(
-            customers,
-            on="customer_id"
+            customers[
+                [
+                    "customer_id",
+                    "customer_state"
+                ]
+            ],
+            on="customer_id",
+            how="left"
         )
         .groupby(
-            "customer_state"
+            "customer_state",
+            observed=True
         )["delivery_days"]
         .mean()
         .reset_index()
@@ -759,15 +924,20 @@ elif page == "Operations Analytics":
     )
 
 
-# ---------------- PAYMENTS & REVIEWS ----------------
+# =========================================================
+# PAYMENTS & REVIEWS
+# =========================================================
 
 elif page == "Payments & Reviews":
+
+    payments = load_payments()
+    reviews = load_reviews()
 
     st.title("Payments & Customer Reviews")
 
     payment = (
         payments
-        .groupby("payment_type")
+        .groupby("payment_type", observed=True)
         .agg(
             Orders=("order_id", "nunique"),
             Payment_Value=(
@@ -856,7 +1026,9 @@ elif page == "Payments & Reviews":
     )
 
 
-# ---------------- FOOTER ----------------
+# =========================================================
+# FOOTER
+# =========================================================
 
 st.sidebar.divider()
 

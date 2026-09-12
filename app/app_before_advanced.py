@@ -1,22 +1,7 @@
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 import plotly.express as px
 from pathlib import Path
-from features import (
-    calculate_rfm,
-    build_cohort_analysis,
-    calculate_clv,
-    calculate_churn_risk,
-    calculate_product_pareto,
-    calculate_market_basket,
-    forecast_revenue,
-    detect_revenue_anomalies,
-    prepare_state_map,
-    run_revenue_scenario,
-    profile_dataframe,
-    dataset_summary,
-    generate_kpi_summary,
-)
 
 
 # =========================================================
@@ -28,7 +13,7 @@ DATA = BASE / "data" / "cleaned"
 
 st.set_page_config(
     page_title="E-Commerce Business Intelligence",
-    page_icon="??",
+    page_icon="🛒",
     layout="wide"
 )
 
@@ -170,7 +155,7 @@ page = st.sidebar.radio(
         "Product Analytics",
         "Geographic Analytics",
         "Operations Analytics",
-        "Payments & Reviews", "Advanced Analytics"
+        "Payments & Reviews"
     ]
 )
 
@@ -943,183 +928,6 @@ elif page == "Operations Analytics":
 # PAYMENTS & REVIEWS
 # =========================================================
 
-elif page == "Advanced Analytics":
-    payments = load_payments()
-    orders = load_orders()
-    items = load_items()
-    products = load_products()
-    orders = orders.merge(payments.groupby("order_id", as_index=False)["payment_value"].sum(), on="order_id", how="left")
-    orders = load_orders()
-    items = load_items()
-    products = load_products()
-    st.title("?? Advanced Analytics")
-    st.subheader("Customer Intelligence")
-    orders = orders.merge(payments.groupby("order_id", as_index=False)["payment_value"].sum(), on="order_id", how="left")
-
-    @st.cache_data
-    def cached_rfm(df):
-        return calculate_rfm(df)
-
-    rfm = cached_rfm(orders)
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Customers", f"{len(rfm):,}")
-    c2.metric("Champions", f"{(rfm["Segment"] == "Champions").sum():,}")
-    c3.metric("At Risk", f"{rfm["Segment"].isin(["At Risk", "At Risk High Value"]).sum():,}")
-    c4.metric("Lost Customers", f"{(rfm["Segment"] == "Lost Customers").sum():,}")
-    st.plotly_chart(
-        px.bar(
-            rfm["Segment"].value_counts().reset_index(),
-            x="Segment",
-            y="count",
-            title="Customer Segments",
-        ),
-        use_container_width=True,
-    )
-    st.subheader("Customer RFM Analysis")
-    st.dataframe(
-        rfm.sort_values("Monetary", ascending=False),
-        use_container_width=True,
-    )
-    st.subheader("Revenue Forecast")
-    periods = st.slider(
-        "Forecast months",
-        min_value=3,
-        max_value=12,
-        value=6,
-    )
-    if st.button("Generate Revenue Forecast"):
-        with st.spinner("Building forecast..."):
-            monthly, forecast = forecast_revenue(
-                orders,
-                periods=periods,
-            )
-        fig = px.line(
-            forecast,
-            x="ds",
-            y="yhat",
-            title="Revenue Forecast",
-        )
-        fig.add_scatter(
-            x=forecast["ds"],
-            y=forecast["yhat_upper"],
-            mode="lines",
-            name="Upper Bound",
-        )
-        fig.add_scatter(
-            x=forecast["ds"],
-            y=forecast["yhat_lower"],
-            mode="lines",
-            name="Lower Bound",
-        )
-        st.plotly_chart(
-            fig,
-            use_container_width=True,
-        )
-        st.download_button(
-            "Download Forecast CSV",
-            forecast.to_csv(index=False),
-            "revenue_forecast.csv",
-            "text/csv",
-        )
-    st.subheader("Revenue Anomaly Detection")
-    if st.button("Detect Revenue Anomalies"):
-        anomalies = detect_revenue_anomalies(orders)
-        st.metric(
-            "Anomalous Days",
-            f"{(anomalies["anomaly_label"] == "Anomaly").sum():,}",
-        )
-        st.plotly_chart(
-            px.scatter(
-                anomalies,
-                x="date",
-                y="revenue",
-                color="anomaly_label",
-                size="orders",
-                title="Daily Revenue Anomalies",
-            ),
-            use_container_width=True,
-        )
-        st.dataframe(
-            anomalies[
-                anomalies["anomaly_label"] == "Anomaly"
-            ],
-            use_container_width=True,
-        )
-    st.subheader("Product Pareto Analysis")
-    @st.cache_data
-    def cached_pareto(items_df, products_df):
-        return calculate_product_pareto(items_df, products_df)
-
-    pareto = cached_pareto(
-        items,
-        products,
-    )
-    st.plotly_chart(
-        px.line(
-            pareto.head(100),
-            x=pareto.head(100).index,
-            y="cumulative_revenue_share",
-            title="Cumulative Revenue Contribution",
-        ),
-        use_container_width=True,
-    )
-    st.dataframe(
-        pareto.head(100),
-        use_container_width=True,
-    )
-    st.subheader("Customer Cohort Retention")
-    @st.cache_data
-    def cached_cohort(df):
-        return build_cohort_analysis(df)
-
-    retention, retention_rate = cached_cohort(orders)
-    st.dataframe(
-        retention_rate.round(1),
-        use_container_width=True,
-    )
-    st.subheader("What-If Revenue Scenario")
-    revenue_change = st.slider(
-        "Revenue adjustment",
-        -50,
-        100,
-        0,
-        format="%d%%",
-    ) / 100
-    order_change = st.slider(
-        "Order volume adjustment",
-        -50,
-        100,
-        0,
-        format="%d%%",
-    ) / 100
-    aov_change = st.slider(
-        "AOV adjustment",
-        -50,
-        100,
-        0,
-        format="%d%%",
-    ) / 100
-    scenario = run_revenue_scenario(
-        orders,
-        revenue_change=revenue_change,
-        order_change=order_change,
-        aov_change=aov_change,
-    )
-    st.dataframe(
-        scenario,
-        use_container_width=True,
-    )
-    st.subheader("Data Quality")
-    quality = dataset_summary(orders)
-    q1, q2, q3, q4 = st.columns(4)
-    q1.metric("Rows", f'{quality["rows"]:,}')
-    q2.metric("Columns", f'{quality["columns"]:,}')
-    q3.metric("Duplicate Rows", f'{quality["duplicate_rows"]:,}')
-    q4.metric("Missing %", f'{quality["missing_percentage"]:.2f}%')
-    st.dataframe(
-        profile_dataframe(orders),
-        use_container_width=True,
-    )
 elif page == "Payments & Reviews":
 
     payments = load_payments()
@@ -1227,12 +1035,3 @@ st.sidebar.divider()
 st.sidebar.caption(
     "Built with Python  |  Pandas  |  Plotly  |  Streamlit"
 )
-
-
-
-
-
-
-
-
-

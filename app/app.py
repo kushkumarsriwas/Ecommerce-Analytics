@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from features import (
     calculate_rfm,
     build_cohort_analysis,
@@ -1227,6 +1229,7 @@ st.sidebar.divider()
 st.sidebar.caption(
     "Built with Python  |  Pandas  |  Plotly  |  Streamlit"
 )
+
 
 
 
